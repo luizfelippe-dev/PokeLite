@@ -1,0 +1,28 @@
+
+(async () => {
+  // Salvar backup antes de substituir o time
+  PokeLiteCheats.backup();
+
+  // Criar time completo de Sinnoh
+  const time = [
+    { id: 392, name: "Infernape" },
+    { id: 398, name: "Staraptor" },
+    { id: 405, name: "Luxray" },
+    { id: 407, name: "Roserade" },
+    { id: 423, name: "Gastrodon" },
+    { id: 445, name: "Garchomp" }
+  ];
+
+  const config = time.map(p => ({
+    id: p.id,
+    level: 25,
+    shiny: false,
+    buffs: 10,
+    moveTier: 2
+  }));
+
+  await PokeLiteCheats.setTeamManual(config);
+
+  console.log("✅ TIME SINNOH CRIADO!");
+  console.table(PokeLiteCheats.team());
+})();
