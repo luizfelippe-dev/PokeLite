@@ -1,1423 +1,576 @@
+/*
+ * PokeLiteCheats v3.7.1 — Pokelike (https://pokelike.xyz/)
+ * Adaptado para o motor JavaScript sem Vue/Pinia, a partir do bundle v3.7.1.
+ * Execute no Console do DevTools da propria pagina do jogo, depois do carregamento.
+ * Nao e um plugin oficial; scripts do jogo e salvamento em nuvem podem mudar.
+ *
+ * Recomendado: PokeLiteCheats.backup() antes de editar o progresso.
+ * Uso: PokeLiteCheats.help()
+ */
 window.PokeLiteCheats = (() => {
-  function app() {
-    const el =
-      document.querySelector('#app') ||
-      document.querySelector('[data-v-app]') ||
-      document.body.firstElementChild;
+  'use strict';
+  const VERSION = '3.7.1-adaptacao-1';
+  const GEN_RANGES = Object.freeze({
+    1: [1, 151], 2: [152, 251], 3: [252, 386],
+    4: [387, 493], 5: [494, 649], 6: [650, 721]
+  });
+  const STATS = ['hp', 'atk', 'def', 'speed', 'special', 'spdef'];
+  const HEALING_REPLACEMENTS = new Set(['max_revive', 'max_potion', 'full_restore']);
+  const BACKUP_PREFIX = 'pokelitecheats_backup_';
 
-    const vueApp = el?.__vue_app__;
-
-    if (!vueApp) {
-      throw new Error('App Vue não encontrado. Abra o jogo completamente antes de rodar o cheat.');
+  function isGamePresent() {
+    return typeof state !== 'undefined' && state && Array.isArray(state.team);
+  }
+  function game() {
+    if (!isGamePresent()) {
+      throw new Error('Motor do Pokelike nao encontrado. Abra pokelike.xyz, carregue o jogo e rode o script no contexto "top" do Console. Nao use o script antigo com Vue/Pinia.');
     }
-
-    return vueApp;
+    return state;
   }
-
-  function pinia() {
-    const a = app();
-
-    const p =
-      a.config?.globalProperties?.$pinia ||
-      Object.values(a._context?.provides || {}).find(v => v?._s instanceof Map);
-
-    if (!p || !(p._s instanceof Map)) {
-      throw new Error('Pinia não encontrado. Espere o jogo carregar completamente.');
+  function inRun() {
+    const s = game();
+    if (!s.team.length || !s.runSeed) {
+      throw new Error('Entre numa partida e tenha pelo menos um Pokemon antes de usar comandos do time.');
     }
-
-    return p;
-  }
-
-  function hasStore(id) {
-    return pinia()._s.has(id);
-  }
-
-  function store(id) {
-    const s = pinia()._s.get(id);
-    if (!s) throw new Error(`Store '${id}' não encontrado.`);
     return s;
   }
-
-  function runStore() {
-    return store('run');
-  }
-
-  function metaStore() {
-    return store('metaProgression');
-  }
-
-  function pokedexStore() {
-    return store('pokedex');
-  }
-
-  function userDexStore() {
-    return hasStore('userPokedex') ? store('userPokedex') : null;
-  }
-
-  function activeRun() {
-    const r = runStore().active;
-    if (!r) throw new Error('Nenhuma run ativa encontrada. Entre numa run primeiro.');
-    return r;
-  }
-
-  function getTeamContainer() {
-    const r = activeRun();
-
-    const candidates = [
-      { parent: r.state, key: 'team' },
-      { parent: r, key: 'team' },
-      { parent: r.state, key: 'party' },
-      { parent: r, key: 'party' },
-      { parent: r.state, key: 'members' },
-      { parent: r, key: 'members' }
-    ];
-
-    for (const c of candidates) {
-      if (c.parent && Array.isArray(c.parent[c.key])) return c;
+  function slotPokemon(slot = 1) {
+    const s = inRun();
+    const n = Number(slot);
+    if (!Number.isInteger(n) || n < 1 || !s.team[n - 1]) {
+      throw new Error('Slot invalido. Use PokeLiteCheats.team() para ver os slots disponiveis.');
     }
-
-    console.log('Run ativa:', r);
-    throw new Error('Não achei o array do time. Use PokeLiteCheats.rawRun() para inspecionar.');
+    return s.team[n - 1];
   }
-
-  function teamArray() {
-    const c = getTeamContainer();
-    return c.parent[c.key];
+  function cleanInt(value, fallback = 0) {
+    const n = Number(value);
+    return Number.isFinite(n) ? Math.floor(n) : fallback;
   }
-
-  function setTeamArray(newTeam) {
-    const c = getTeamContainer();
-    c.parent[c.key] = newTeam;
-    touch();
+  function copy(x) {
+    return typeof structuredClone === 'function' ? structuredClone(x) : JSON.parse(JSON.stringify(x));
   }
-
-  function member(slot = 1) {
-    const p = teamArray()[Number(slot) - 1];
-
-    if (!p) {
-      throw new Error(`Não existe Pokémon no slot ${slot}. Use PokeLiteCheats.team().`);
-    }
-
-    return p;
-  }
-
-  function getBagContainer() {
-    const r = activeRun();
-
-    const candidates = [
-      { parent: r.state, key: 'inventory' },
-      { parent: r, key: 'inventory' },
-      { parent: r.state, key: 'bag' },
-      { parent: r, key: 'bag' },
-      { parent: r.state, key: 'items' },
-      { parent: r, key: 'items' },
-      { parent: r.state, key: 'bagItems' },
-      { parent: r, key: 'bagItems' }
-    ];
-
-    for (const c of candidates) {
-      if (c.parent && Array.isArray(c.parent[c.key])) return c;
-    }
-
-    console.log('Run ativa:', r);
-    throw new Error('Não achei a mochila/bag na run ativa.');
-  }
-
-  function bagArray() {
-    const c = getBagContainer();
-    return c.parent[c.key];
-  }
-
-  function safeClone(obj) {
-    try {
-      return structuredClone(obj);
-    } catch {
-      return JSON.parse(JSON.stringify(obj));
-    }
-  }
-
-  function speciesIdOf(p) {
-    return p.speciesId ?? p.pokemonId ?? p.dexId ?? p.id;
-  }
-
-  function rootIdOf(p) {
-    return (
-      p.rootSpeciesId ??
-      p.evoRootSpeciesId ??
-      p.lineRootSpeciesId ??
-      p.evolutionRootId ??
-      p.evolutionRootSpeciesId ??
-      speciesIdOf(p)
-    );
-  }
-
   function normalizeStat(stat) {
-    const key = String(stat).toLowerCase().replace(/\s+/g, '');
-
-    const map = {
-      hp: 'hp',
-      vida: 'hp',
-
-      atk: 'atk',
-      attack: 'atk',
-      ataque: 'atk',
-
-      def: 'def',
-      defesa: 'def',
-
-      speed: 'speed',
-      spe: 'speed',
-      velocidade: 'speed',
-
-      special: 'special',
-      spa: 'special',
-      spatk: 'special',
-      spattack: 'special',
-
-      spdef: 'spdef',
-      spd: 'spdef',
-      spdefense: 'spdef',
-      defesaespecial: 'spdef'
+    const q = String(stat).toLowerCase().replace(/\s+/g, '');
+    const aliases = {
+      vida: 'hp', hp: 'hp', ataque: 'atk', attack: 'atk', atk: 'atk',
+      defesa: 'def', defense: 'def', def: 'def', velocidade: 'speed', spe: 'speed', speed: 'speed',
+      especial: 'special', spa: 'special', spatk: 'special', special: 'special',
+      spattack: 'special', defesaespecial: 'spdef', spd: 'spdef', spdefense: 'spdef', spdef: 'spdef'
     };
-
-    if (!map[key]) {
-      throw new Error('Stat inválido. Use: hp, atk, def, speed, special ou spdef.');
-    }
-
-    return map[key];
+    if (!aliases[q]) throw new Error('Stat invalido: hp, atk, def, speed, special, spdef.');
+    return aliases[q];
   }
-
-  function normalizeItemId(itemId) {
-    const key = String(itemId).toLowerCase().trim();
-
-    const map = {
-      max_potion: 'full_restore',
-      maxpotion: 'full_restore',
-      potion_max: 'full_restore',
-      potionmax: 'full_restore',
-      pocao_maxima: 'full_restore',
-      poção_máxima: 'full_restore',
-      pocaomaxima: 'full_restore',
-      poçãomáxima: 'full_restore',
-      pocao: 'full_restore',
-
-      revive_max: 'max_revive',
-      maxrevive: 'max_revive',
-      revive_maximo: 'max_revive',
-      revive_máximo: 'max_revive',
-      revivemaximo: 'max_revive',
-      revivemáximo: 'max_revive'
-    };
-
-    return map[key] || key;
+  function root(p) {
+    return typeof getEvoLineRoot === 'function' ? getEvoLineRoot(p.speciesId) : p.speciesId;
   }
-
-  function touch() {
-    const rs = runStore();
-
-    try {
-      const c = getTeamContainer();
-      c.parent[c.key] = [...c.parent[c.key]];
-    } catch {}
-
-    try {
-      const c = getBagContainer();
-      c.parent[c.key] = [...c.parent[c.key]];
-    } catch {}
-
-    try { rs.$patch({}); } catch {}
-
-    return '✅ Alteração aplicada.';
-  }
-
-  function maxHpFor(p) {
-    const hpBase =
-      p.baseStats?.hp ??
-      p.stats?.hp ??
-      p.hpBase ??
-      p.baseHp ??
-      100;
-
-    const level = Number(p.level || 100);
-
-    const calc = Math.floor((hpBase * level) / 50) + level + 10;
-    return Math.max(Number(p.maxHp || 0), calc, 1);
-  }
-
-  function setHpFull(p) {
-    p.maxHp = maxHpFor(p);
-    p.currentHp = p.maxHp;
-    p.hp = p.currentHp;
-  }
-
-  function makeShiny(p, value = true) {
-    const v = !!value;
-
-    // Campos principais usados em estruturas diferentes do jogo
-    p.shiny = v;
-    p.isShiny = v;
-    p.wasShiny = v;
-
-    // Campos de variante/cosmético que alguns Pokémon criados manualmente precisam
-    p.variant = v ? 'shiny' : 'normal';
-    p.spriteVariant = v ? 'shiny' : 'normal';
-    p.cosmetic = v ? 'shiny' : 'normal';
-
-    // Alguns objetos carregam a flag dentro de form
-    if (!p.form || typeof p.form !== 'object') {
-      p.form = {};
-    }
-
-    p.form.shiny = v;
-    p.form.isShiny = v;
-    p.form.variant = v ? 'shiny' : 'normal';
-
-    // Alguns Pokémon criados por setTeamManual ficam com dados internos aninhados
-    for (const key of ['pokemon', 'species', 'base', 'data', 'template']) {
-      if (p[key] && typeof p[key] === 'object') {
-        p[key].shiny = v;
-        p[key].isShiny = v;
-        p[key].wasShiny = v;
-        p[key].variant = v ? 'shiny' : 'normal';
-        p[key].spriteVariant = v ? 'shiny' : 'normal';
-      }
-    }
-
-    function fixSpriteUrl(url) {
-      if (!url || typeof url !== 'string') return url;
-
-      if (v) {
-        if (url.includes('/pokemon/shiny/')) return url;
-        return url.replace('/pokemon/', '/pokemon/shiny/');
-      }
-
-      return url.replace('/pokemon/shiny/', '/pokemon/');
-    }
-
-    p.spriteUrl = fixSpriteUrl(p.spriteUrl);
-    p.image = fixSpriteUrl(p.image);
-    p.iconUrl = fixSpriteUrl(p.iconUrl);
-
-    if (p.sprites && typeof p.sprites === 'object') {
-      for (const k of Object.keys(p.sprites)) {
-        if (typeof p.sprites[k] === 'string') {
-          p.sprites[k] = fixSpriteUrl(p.sprites[k]);
-        }
-      }
-    }
-
-    return p;
-  }
-
-  function setItem(p, itemId) {
-    if ('heldItemId' in p) p.heldItemId = itemId;
-    else if ('itemId' in p) p.itemId = itemId;
-    else p.heldItemId = itemId;
-  }
-
-  function setMoveType(p, type) {
-    p.moveType = type;
-  }
-
-  function setMoveTier(p, tier = 2) {
-    p.moveTier = Math.max(0, Math.min(2, Number(tier) || 0));
-  }
-
-  function applyBasicMax(p, options = {}) {
-    const {
-      level = 100,
-      shiny = true,
-      item = null,
-      moveType = null,
-      moveTier = 2
-    } = options;
-
-    p.level = Number(level) || 100;
-    makeShiny(p, shiny);
-    setMoveTier(p, moveTier);
-
-    if (moveType) setMoveType(p, moveType);
-    if (item) setItem(p, item);
-
-    setHpFull(p);
-
-    return p;
-  }
-
-  function applyBuffsToMember(p, amount = 10) {
-    const meta = metaStore();
-    const rootId = rootIdOf(p);
-    const gen = activeRun().gen ?? activeRun().state?.gen ?? 0;
-
-    if (typeof meta.applyTeamStatBuff === 'function') {
-      for (const stat of ['hp', 'atk', 'def', 'speed', 'special', 'spdef']) {
-        for (let i = 0; i < amount; i++) {
-          meta.applyTeamStatBuff(rootId, stat, 999999, gen);
-        }
-      }
-    } else {
-      console.warn('applyTeamStatBuff não encontrado. Buffs da Battle Tower podem não aplicar.');
+  function refreshUI() {
+    const s = game();
+    for (const [name, callback] of [
+      ['renderTeamBar', () => renderTeamBar(s.team)],
+      ['renderItemBadges', () => renderItemBadges(s.items || [])],
+      ['refreshTraitPanel', () => refreshTraitPanel()]
+    ]) {
+      try {
+        if ((name === 'renderTeamBar' && typeof renderTeamBar === 'function') ||
+            (name === 'renderItemBadges' && typeof renderItemBadges === 'function') ||
+            (name === 'refreshTraitPanel' && typeof refreshTraitPanel === 'function')) callback();
+      } catch (e) { console.warn('[PokeLiteCheats] Nao foi possivel atualizar ' + name, e); }
     }
   }
-
-  async function loadDex() {
-    const dex = pokedexStore();
-
-    if (typeof dex.load === 'function' && !dex.isLoaded) {
-      await dex.load();
+  function persist() {
+    const s = game();
+    if (s.runSeed && typeof runWritesAllowed === 'function' && !runWritesAllowed()) {
+      throw new Error('O jogo bloqueou salvar esta partida (outra aba e dona da run). Nao force o salvamento: use a aba principal.');
     }
-
-    const list =
-      dex.pokemon ||
-      dex.all ||
-      dex.list ||
-      [];
-
-    if (!Array.isArray(list) || list.length === 0) {
-      throw new Error('Pokédex não carregou ou está vazia.');
-    }
-
-    return list;
-  }
-
-  function findDexPokemon(list, idOrName) {
-    const q = String(idOrName).toLowerCase();
-
-    return list.find(p =>
-      String(p.id) === q ||
-      String(p.speciesId) === q ||
-      String(p.pokemonId) === q ||
-      String(p.dexId) === q ||
-      String(p.name || '').toLowerCase() === q
-    );
-  }
-
-  function copyDexIntoMember(template, dexPoke) {
-    const p = safeClone(template);
-
-    const id =
-      dexPoke.speciesId ??
-      dexPoke.pokemonId ??
-      dexPoke.dexId ??
-      dexPoke.id;
-
-    p.speciesId = id;
-
-    if ('pokemonId' in p) p.pokemonId = id;
-    if ('dexId' in p) p.dexId = id;
-
-    if ('id' in p && typeof p.id === 'number' && p.id === speciesIdOf(template)) {
-      p.id = id;
-    }
-
-    p.name = dexPoke.name ?? p.name;
-    p.nickname = null;
-
-    if (dexPoke.types) p.types = safeClone(dexPoke.types);
-    if (dexPoke.baseStats) p.baseStats = safeClone(dexPoke.baseStats);
-    if (dexPoke.stats) p.stats = safeClone(dexPoke.stats);
-
-    const sprite =
-      dexPoke.spriteUrl ??
-      dexPoke.sprite ??
-      dexPoke.image ??
-      dexPoke.iconUrl ??
-      `https://raw.githubusercontent.com/PokeAPI/sprites/master/sprites/pokemon/${id}.png`;
-
-    p.spriteUrl = sprite;
-    p.image = sprite;
-    p.iconUrl = sprite;
-
-    if ('rootSpeciesId' in p) p.rootSpeciesId = id;
-    if ('evoRootSpeciesId' in p) p.evoRootSpeciesId = id;
-    if ('lineRootSpeciesId' in p) p.lineRootSpeciesId = id;
-    if ('evolutionRootId' in p) p.evolutionRootId = id;
-    if ('evolutionRootSpeciesId' in p) p.evolutionRootSpeciesId = id;
-
-    return p;
-  }
-
-  async function makeMemberFromDex(idOrName, options = {}) {
-    const currentTeam = teamArray();
-    const template = currentTeam[0];
-
-    if (!template) {
-      throw new Error('Precisa ter pelo menos 1 Pokémon no time para clonar a estrutura interna.');
-    }
-
-    const dex = await loadDex();
-    const dexPoke = findDexPokemon(dex, idOrName);
-
-    if (!dexPoke) {
-      throw new Error(`Pokémon não encontrado na Pokédex: ${idOrName}`);
-    }
-
-    const p = copyDexIntoMember(template, dexPoke);
-    applyBasicMax(p, options);
-
-    return p;
-  }
-
-  function markCaught(p) {
-    const userDex = userDexStore();
-    if (!userDex) return;
-
-    const id = speciesIdOf(p);
-
-    try { userDex.markCaught?.(id); } catch {}
-    try { userDex.markShinyCaught?.(id); } catch {}
-  }
-
-  function addLooseItemDirect(itemId, amount = 1) {
-    const id = normalizeItemId(itemId);
-    const inv = bagArray();
-    const qty = Math.max(1, Number(amount) || 1);
-
-    for (let i = 0; i < qty; i++) {
-      inv.push({ itemId: id });
-    }
-
-    touch();
-
-    return {
-      item: id,
-      amount: qty,
-      method: 'loose inventory slots',
-      note: 'Adicionado como itens separados, pois esses itens não parecem ser acumuláveis no Pokelite.'
-    };
-  }
-
-
-  const GEN_RANGES = {
-    1: [1, 151],
-    2: [152, 251],
-    3: [252, 386],
-    4: [387, 493],
-    5: [494, 649],
-    6: [650, 721],
-    7: [722, 809],
-    8: [810, 905],
-    9: [906, 1025]
-  };
-
-  function readJson(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return safeClone(fallback);
-      return JSON.parse(raw);
-    } catch {
-      return safeClone(fallback);
-    }
-  }
-
-  function writeJson(key, value) {
-    localStorage.setItem(key, JSON.stringify(value));
-  }
-
-  function syncProgression() {
-    try { runStore().$patch({}); } catch {}
-    try { metaStore().$patch({}); } catch {}
-
-    try {
-      const userDex = userDexStore();
-      userDex?.$patch?.({});
-    } catch {}
-
-    try {
-      if (hasStore('achievements')) store('achievements').$patch?.({});
-    } catch {}
-
-    try {
-      if (typeof window.syncToCloud === 'function') window.syncToCloud();
-    } catch {}
-
-    try {
-      if (typeof window.checkDexAchievements === 'function') window.checkDexAchievements();
-    } catch {}
-
+    if (s.runSeed && typeof saveRun === 'function') saveRun();
+    if (s.isEndlessMode && typeof saveEndlessState === 'function') saveEndlessState();
+    refreshUI();
+    // O jogo tambem pode sincronizar para a nuvem em outras etapas; nao force upload aqui.
     return true;
   }
-
-  function getRangeByGen(gen) {
-    const g = Number(gen);
-
-    if (!GEN_RANGES[g]) {
-      throw new Error('Geração inválida. Use um número de 1 a 9.');
+  function mutate(callback) {
+    inRun();
+    if (typeof runWritesAllowed === 'function' && !runWritesAllowed()) {
+      throw new Error('Esta partida pertence a outra aba; abra a aba proprietaria.');
     }
-
-    return GEN_RANGES[g];
+    const result = callback();
+    persist();
+    return result;
   }
-
-  function normalizeAchievementId(a) {
-    if (!a) return null;
-    if (typeof a === 'string' || typeof a === 'number') return a;
-
-    return (
-      a.id ??
-      a.key ??
-      a.code ??
-      a.name ??
-      a.slug ??
-      null
-    );
+  function setHp(p, full = true) {
+    if (typeof recomputeMaxHpForBuffs === 'function') {
+      recomputeMaxHpForBuffs(p);
+    } else if (p.baseStats && p.baseStats.hp) {
+      const base = typeof calcHp === 'function'
+        ? calcHp(p.baseStats.hp, p.level)
+        : Math.floor(p.baseStats.hp * p.level / 50) + p.level + 10;
+      const buff = p.statBuffs?.hp || 0;
+      p.maxHp = Math.max(1, Math.floor(base * (1 + 0.05 * buff)));
+    }
+    if (full) p.currentHp = Math.max(1, p.maxHp || 1);
   }
-
-  function collectAchievementIds() {
-    const ids = new Set();
-
-    function addFrom(value) {
-      if (!value) return;
-
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const id = normalizeAchievementId(item);
-          if (id !== null && id !== undefined && id !== '') ids.add(id);
-        }
-        return;
-      }
-
-      if (typeof value === 'object') {
-        for (const [key, item] of Object.entries(value)) {
-          const id = normalizeAchievementId(item) ?? key;
-          if (id !== null && id !== undefined && id !== '') ids.add(id);
-        }
+  function setShinyFlag(p, shiny = true) {
+    p.isShiny = !!shiny;
+    p.isAurora = false;
+    if (p.speciesId != null) {
+      const src = String(p.spriteUrl || `img/sprites/pokemon/${p.speciesId}.png`);
+      if (src.includes('/pokemon/')) {
+        const base = src.replace(/\/pokemon\/(?:shiny\/|aurora\/)?/, '/pokemon/');
+        p.spriteUrl = shiny ? base.replace('/pokemon/', '/pokemon/shiny/') : base;
+      } else if (typeof pokeSpritePath === 'function') {
+        p.spriteUrl = pokeSpritePath(p.speciesId, p);
       }
     }
-
-    try {
-      if (hasStore('achievements')) {
-        const a = store('achievements');
-
-        for (const key of [
-          'achievements',
-          'allAchievements',
-          'achievementList',
-          'list',
-          'all',
-          'items',
-          'definitions',
-          'availableAchievements'
-        ]) {
-          addFrom(a[key]);
-        }
-      }
-    } catch {}
-
-    for (const key of ['ACHIEVEMENTS', 'achievements', '__ACHIEVEMENTS__', 'POKELITE_ACHIEVEMENTS']) {
-      try { addFrom(window[key]); } catch {}
-      try { addFrom(globalThis[key]); } catch {}
+    if (shiny && typeof markShinyDexCaught === 'function') {
+      markShinyDexCaught(p.speciesId, p.name, p.types, p.spriteUrl);
     }
-
-    return [...ids];
   }
-
-  function currentAchievementSet() {
-    const values = [
-      ...readJson('poke_achievements', []),
-      ...readJson('achievements', []),
-      ...readJson('unlockedAchievements', [])
+  function registerCaught(p) {
+    if (typeof markPokedexCaught === 'function') markPokedexCaught(p.speciesId);
+    if (p.isShiny && typeof markShinyDexCaught === 'function') {
+      markShinyDexCaught(p.speciesId, p.name, p.types, p.spriteUrl);
+    }
+  }
+  function readBuffs() {
+    if (typeof loadPersistentBuffs === 'function') return loadPersistentBuffs();
+    try { return JSON.parse(localStorage.getItem('poke_stat_buffs') || '{}'); }
+    catch { return {}; }
+  }
+  function writeBuffs(obj) {
+    if (typeof savePersistentBuffs === 'function') savePersistentBuffs(obj);
+    else localStorage.setItem('poke_stat_buffs', JSON.stringify(obj));
+  }
+  function applyBuffDirect(p, stat, amount, persistent = null) {
+    const k = normalizeStat(stat);
+    p.statBuffs ||= {};
+    const old = Math.max(0, cleanInt(p.statBuffs[k] || 0));
+    const next = Math.min(10, old + Math.max(0, cleanInt(amount, 1)));
+    p.statBuffs[k] = next;
+    if (k === 'atk' || k === 'special') {
+      p.statBuffs.atk = Math.max(p.statBuffs.atk || 0, next);
+      p.statBuffs.special = Math.max(p.statBuffs.special || 0, next);
+    }
+    if (k === 'hp') setHp(p, false);
+    const buffs = persistent || readBuffs();
+    buffs[root(p)] = { ...p.statBuffs };
+    if (!persistent) writeBuffs(buffs);
+    return { stat: k, previous: old, value: next, max: 10 };
+  }
+  function allBuffsDirect(p, persistent = null) {
+    const db = persistent || readBuffs();
+    p.statBuffs ||= {};
+    for (const k of STATS) p.statBuffs[k] = 10;
+    db[root(p)] = { ...p.statBuffs };
+    if (!persistent) writeBuffs(db);
+    setHp(p, true);
+    return { ...p.statBuffs };
+  }
+  function itemDefinition(itemId) {
+    const id = String(itemId || '').trim().toLowerCase();
+    if (HEALING_REPLACEMENTS.has(id)) {
+      throw new Error(`O item '${id}' nao existe na mochila da versao 3.7.1. Use reviveAndHealTeam() para curar sem item.`);
+    }
+    const bag = Array.isArray(game().items) ? game().items : [];
+    const pools = [
+      ...(typeof ITEM_POOL !== 'undefined' && Array.isArray(ITEM_POOL) ? ITEM_POOL : []),
+      ...(typeof USABLE_ITEM_POOL !== 'undefined' && Array.isArray(USABLE_ITEM_POOL) ? USABLE_ITEM_POOL : []),
+      ...bag,
+      ...game().team.map(p => p?.heldItem).filter(Boolean)
     ];
-
-    try {
-      if (hasStore('achievements')) {
-        const a = store('achievements');
-
-        for (const key of ['unlocked', 'unlockedAchievements', 'completed', 'completedAchievements']) {
-          if (Array.isArray(a[key])) values.push(...a[key]);
-          else if (a[key] && typeof a[key] === 'object') values.push(...Object.keys(a[key]));
-        }
-      }
-    } catch {}
-
-    return new Set(values.filter(v => v !== null && v !== undefined && v !== ''));
+    return pools.find(x => x?.id?.toLowerCase() === id) || null;
   }
-
-  function unlockAchievementInStore(id) {
-    try {
-      if (!hasStore('achievements')) return;
-
-      const a = store('achievements');
-
-      for (const fn of [
-        'unlockAchievement',
-        'unlock',
-        'completeAchievement',
-        'complete',
-        'markUnlocked',
-        'markCompleted'
-      ]) {
-        if (typeof a[fn] === 'function') {
-          try { a[fn](id); } catch {}
-        }
-      }
-
-      for (const key of ['unlocked', 'unlockedAchievements', 'completed', 'completedAchievements']) {
-        if (Array.isArray(a[key]) && !a[key].includes(id)) a[key].push(id);
-        else if (a[key] && typeof a[key] === 'object') a[key][id] = true;
-      }
-    } catch {}
+  function readMoney() {
+    if (typeof getPokedollars === 'function') return getPokedollars();
+    return Math.max(0, cleanInt(localStorage.getItem('poke_pokedollars')));
   }
-
-  function unlockDexId(id, shiny = false) {
-    const userDex = userDexStore();
-
-    try { userDex?.markCaught?.(id); } catch {}
-    if (shiny) {
-      try { userDex?.markShinyCaught?.(id); } catch {}
+  function writeMoney(value) {
+    const n = Math.max(0, cleanInt(value));
+    if (typeof setPokedollars === 'function') setPokedollars(n);
+    else localStorage.setItem('poke_pokedollars', String(n));
+    return { pokedollars: readMoney(), currency: 'Pokédollars (substitui o antigo BP)' };
+  }
+  async function findSpecies(input) {
+    if (typeof loadStaticPokedex !== 'function' || typeof fetchPokemonById !== 'function' || typeof createInstance !== 'function') {
+      throw new Error('Funcoes da Pokédex nao encontradas. Essa versao do jogo pode ter mudado de novo.');
     }
-  }
-
-  function unlockDexRange(min, max, options = {}) {
-    const {
-      normal = true,
-      shiny = false
-    } = options;
-
-    const dex = readJson('poke_dex', {});
-    const shinyDex = readJson('poke_shiny_dex', {});
-
-    let normalAdded = 0;
-    let shinyAdded = 0;
-
-    for (let id = min; id <= max; id++) {
-      if (normal && dex[id] !== 1) {
-        dex[id] = 1;
-        normalAdded++;
-      }
-
-      if (shiny && shinyDex[id] !== 1) {
-        shinyDex[id] = 1;
-        shinyAdded++;
-      }
-
-      unlockDexId(id, shiny);
+    const entries = await loadStaticPokedex();
+    const requested = String(input).trim().toLowerCase();
+    let id = Number.isInteger(Number(requested)) && Number(requested) > 0 ? Number(requested) : null;
+    if (!id && entries && typeof entries === 'object') {
+      const found = Object.entries(entries).find(([key, v]) => String(v?.name || '').toLowerCase() === requested || key.toLowerCase() === requested);
+      if (found) id = Number(found[0]);
     }
-
-    writeJson('poke_dex', dex);
-    writeJson('poke_shiny_dex', shinyDex);
-    syncProgression();
-
-    return {
-      range: `${min}-${max}`,
-      normalAdded,
-      shinyAdded,
-      normalTotal: Object.values(dex).filter(v => v === 1).length,
-      shinyTotal: Object.values(shinyDex).filter(v => v === 1).length
-    };
+    const data = await fetchPokemonById(id || requested);
+    if (!data?.baseStats || !data?.types) throw new Error('Pokemon nao encontrado na Pokédex: ' + input);
+    return data;
+  }
+  async function buildPokemon(input, options = {}, buffsDb = null) {
+    const data = await findSpecies(input);
+    const lvl = Math.max(1, cleanInt(options.level ?? 100, 100));
+    const shiny = options.shiny !== false;
+    const tier = Math.max(0, Math.min(2, cleanInt(options.moveTier ?? 2, 2)));
+    const p = createInstance(data, lvl, shiny, tier);
+    if (options.item) {
+      const item = itemDefinition(options.item);
+      if (!item) throw new Error('Item nao encontrado no jogo: ' + options.item);
+      p.heldItem = copy(item);
+    }
+    if (options.moveType) console.warn('[PokeLiteCheats] moveType ignorado: o motor atual calcula o tipo do golpe dinamicamente.');
+    if (options.buffs !== 0) {
+      const amount = Math.max(0, Math.min(10, cleanInt(options.buffs ?? 10, 10)));
+      p.statBuffs = Object.fromEntries(STATS.map(k => [k, amount]));
+      const buffMap = buffsDb || readBuffs();
+      buffMap[root(p)] = { ...p.statBuffs };
+      if (!buffsDb) writeBuffs(buffMap);
+      setHp(p, true);
+    }
+    return p;
+  }
+  function storageSnapshot() {
+    const keys = ['poke_endless_state', 'poke_stat_buffs', 'poke_pokedollars',
+      'poke_dex', 'poke_shiny_dex', 'poke_achievements'];
+    const values = {};
+    for (const k of keys) values[k] = localStorage.getItem(k);
+    values.poke_current_run = typeof runSlotGet === 'function'
+      ? runSlotGet('poke_current_run') : localStorage.getItem('poke_current_run');
+    return values;
+  }
+  function savedBackup(key) {
+    const raw = localStorage.getItem(key);
+    if (!raw) throw new Error('Backup nao encontrado: ' + key);
+    const data = JSON.parse(raw);
+    if (!data || data.source !== 'PokeLiteCheats' || !data.values) throw new Error('Arquivo de backup invalido.');
+    return data;
   }
 
   const api = {
+    version: VERSION,
     help() {
-      console.log(`
-=== PokeLiteCheats ===
-
-Diagnóstico:
-PokeLiteCheats.stores()
-PokeLiteCheats.rawRun()
-PokeLiteCheats.rawTeam()
-PokeLiteCheats.rawBag()
-PokeLiteCheats.rawMeta()
-PokeLiteCheats.team()
-PokeLiteCheats.bag()
-
-Cheats de Pokémon:
-PokeLiteCheats.level(slot, level)
-PokeLiteCheats.addLevel(slot, amount)
-PokeLiteCheats.shiny(slot)
-PokeLiteCheats.unshiny(slot)
-PokeLiteCheats.shinyTeam()
-PokeLiteCheats.forceTeamShiny()
-PokeLiteCheats.heal()
-PokeLiteCheats.heal(slot)
-PokeLiteCheats.faint(slot)
-PokeLiteCheats.moveTier(slot, 0/1/2)
-PokeLiteCheats.moveType(slot, 'Fire')
-PokeLiteCheats.equip(slot, 'leftovers')
-
-Battle Tower:
-PokeLiteCheats.battlePoints(9999)
-PokeLiteCheats.addBattlePoints(100)
-PokeLiteCheats.buff(slot, 'atk', amount)
-PokeLiteCheats.maxBuffs(slot)
-PokeLiteCheats.showBuffs(slot)
-
-Itens:
-PokeLiteCheats.addItem('max_revive', 10)
-PokeLiteCheats.addItem('full_restore', 10)
-PokeLiteCheats.addItem('max_potion', 10) // vira full_restore automaticamente
-PokeLiteCheats.maxRevive(10)
-PokeLiteCheats.fullRestore(10)
-PokeLiteCheats.maxHealingItems(10)
-
-Cura sem item:
-PokeLiteCheats.reviveAndHealTeam()
-
-Pokédex:
-await PokeLiteCheats.pokemon('pikachu')
-console.table(await PokeLiteCheats.allPokemon())
-
-
-Pokédex/Conquistas:
-PokeLiteCheats.unlockAchievements()
-PokeLiteCheats.unlockDexGen(1)
-PokeLiteCheats.unlockShinyDexGen(1)
-PokeLiteCheats.unlockDexAll()
-PokeLiteCheats.unlockShinyDexAll()
-PokeLiteCheats.dexStatus()
-
-Montagem manual:
-await PokeLiteCheats.setPokemon(1, 445, { item: 'choice_band', moveType: 'Ground' })
-await PokeLiteCheats.setTeamManual([
-  { id: 445, item: 'choice_band', moveType: 'Ground' },
-  { id: 376, item: 'assault_vest', moveType: 'Steel' }
-])
-
-Presets genéricos:
-await PokeLiteCheats.apelaPrimeiro()
-await PokeLiteCheats.apelaTime()
-      `);
-
-      return 'Comandos listados no console.';
+      const help = `
+===== PokeLiteCheats v${VERSION} =====
+Diagnostico / seguranca:
+  PokeLiteCheats.status() | stores() | backup() | listBackups()
+  PokeLiteCheats.rawRun() | rawTeam() | rawBag() | rawMeta()
+  PokeLiteCheats.team() | bag() | showBuffs(1)
+Equipe:
+  PokeLiteCheats.level(1,100) | addLevel(1,20)
+  PokeLiteCheats.shiny(1) | unshiny(1) | shinyTeam()
+  PokeLiteCheats.heal() | heal(1) | faint(1)
+  PokeLiteCheats.moveTier(1,2) | equip(1,'leftovers')
+  PokeLiteCheats.buff(1,'atk',3) | maxBuffs(1)
+  PokeLiteCheats.apelaPrimeiro() | apelaTime()
+  PokeLiteCheats.reviveAndHealTeam()
+Pokédollars (antigo BP):
+  PokeLiteCheats.bp() | setBP(999999) | addBP(1000)
+  PokeLiteCheats.maxBP() | spendBP(100)
+Itens (maximo 10 itens na mochila atual):
+  PokeLiteCheats.itemsDisponiveis()
+  PokeLiteCheats.addItem('leftovers',1)
+  PokeLiteCheats.addItem('rare_candy',1)
+  PokeLiteCheats.addPassive('power_bracer')
+Pokédex / conquistas (geracoes 1 a 6 nesta versao):
+  PokeLiteCheats.unlockDexGen(1) | unlockShinyDexGen(1)
+  PokeLiteCheats.unlockDexAll() | unlockShinyDexAll()
+  PokeLiteCheats.unlockAchievements() | dexStatus()
+  await PokeLiteCheats.pokemon('pikachu')
+  console.table(await PokeLiteCheats.allPokemon())
+Criar Pokemon / montar time:
+  await PokeLiteCheats.setPokemon(1,445,{level:100,shiny:true,item:'choice_band'})
+  await PokeLiteCheats.setTeamManual([{id:445},{id:376}])
+Avisos: moveType nao tem equivalente confirmado; max_revive/full_restore
+nao existem como itens no codigo 3.7.1. Os comandos de cura continuam.
+`;
+      console.log(help);
+      return 'Lista completa exibida no console.';
     },
-
-    stores() {
-      return [...pinia()._s.entries()].map(([id, s]) => ({
-        id,
-        keys: Object.keys(s).join(', ')
-      }));
+    status() {
+      const info = {
+        script: VERSION,
+        jogo: document.querySelector('.title-version')?.textContent?.trim() || 'desconhecida',
+        motorLocalizado: isGamePresent(),
+        teamSize: isGamePresent() ? game().team.length : null,
+        runSeed: isGamePresent() ? (game().runSeed ?? null) : null,
+        possuiSaveRun: typeof saveRun === 'function',
+        possuiCreateInstance: typeof createInstance === 'function',
+        possuiBuffsNativos: typeof loadPersistentBuffs === 'function',
+        moeda: readMoney(),
+        contexto: location.href
+      };
+      console.table(info);
+      return info;
     },
-
-    rawRun() {
-      return activeRun();
-    },
-
-    rawTeam() {
-      return teamArray();
-    },
-
-    rawBag() {
-      return bagArray();
-    },
-
-    rawMeta() {
-      return metaStore();
-    },
-
+    stores() { return this.status(); },
+    rawRun() { return game(); },
+    rawTeam() { return game().team; },
+    rawBag() { return game().items; },
+    rawMeta() { return { pokedollars: readMoney(), buffs: readBuffs(), dex: this.dexStatus() }; },
     team() {
-      return teamArray().map((p, i) => ({
-        slot: i + 1,
-        id: speciesIdOf(p),
-        rootId: rootIdOf(p),
-        name: p.nickname || p.name,
-        level: p.level,
-        shiny: p.isShiny ?? p.shiny ?? false,
-        hp: p.currentHp !== undefined && p.maxHp !== undefined ? `${p.currentHp}/${p.maxHp}` : null,
-        heldItemId: p.heldItemId ?? p.itemId ?? null,
-        megaStoneId: p.megaStoneId ?? null,
-        moveTier: p.moveTier ?? null,
-        moveType: p.moveType ?? null,
-        types: Array.isArray(p.types) ? p.types.join('/') : p.types
+      return game().team.map((p, i) => ({
+        slot: i + 1, speciesId: p.speciesId, name: p.nickname || p.name,
+        level: p.level, hp: `${p.currentHp}/${p.maxHp}`,
+        shiny: !!p.isShiny, aurora: !!p.isAurora,
+        item: p.heldItem?.id || null, moveTier: p.moveTier,
+        buffs: { ...p.statBuffs }
       }));
     },
-
     bag() {
-      return bagArray().map((it, i) => ({
-        slot: i + 1,
-        itemId: it?.itemId ?? it?.id ?? it,
-        raw: it
-      }));
+      return (game().items || []).map((x, i) => ({ slot: i + 1, id: x.id, name: x.name || x.id }));
     },
-
-    level(slot = 1, level = 100) {
-      const p = member(slot);
-      p.level = Math.max(1, Number(level) || 1);
-      setHpFull(p);
-      touch();
-
-      return {
-        pokemon: p.nickname || p.name,
-        level: p.level,
-        hp: `${p.currentHp}/${p.maxHp}`
-      };
+    backup() {
+      const key = BACKUP_PREFIX + new Date().toISOString().replace(/[.:]/g, '-');
+      const data = { source: 'PokeLiteCheats', version: VERSION, createdAt: new Date().toISOString(), values: storageSnapshot() };
+      localStorage.setItem(key, JSON.stringify(data));
+      console.info('Backup criado:', key, 'Use listBackups() para encontrar depois.');
+      return key;
     },
-
+    listBackups() {
+      return Object.keys(localStorage).filter(k => k.startsWith(BACKUP_PREFIX)).sort().reverse();
+    },
+    restoreBackup(key, confirmacao = false) {
+      if (confirmacao !== true) throw new Error('Isso substitui seu progresso! Para confirmar: restoreBackup("' + key + '", true). A pagina sera recarregada.');
+      const data = savedBackup(key);
+      for (const [k, v] of Object.entries(data.values)) {
+        if (k === 'poke_current_run' && typeof runSlotSet === 'function' && typeof runSlotRemove === 'function') {
+          v === null ? runSlotRemove(k) : runSlotSet(k, v);
+        } else {
+          v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v);
+        }
+      }
+      location.reload();
+    },
+    level(slot = 1, value = 100) {
+      return mutate(() => {
+        const p = slotPokemon(slot);
+        p.level = Math.max(1, cleanInt(value, 100));
+        setHp(p, true);
+        return { name: p.name, level: p.level, hp: p.currentHp };
+      });
+    },
     addLevel(slot = 1, amount = 1) {
-      const p = member(slot);
-      p.level = Math.max(1, Number(p.level || 1) + (Number(amount) || 1));
-      setHpFull(p);
-      touch();
-
-      return {
-        pokemon: p.nickname || p.name,
-        level: p.level,
-        hp: `${p.currentHp}/${p.maxHp}`
-      };
+      return mutate(() => {
+        const p = slotPokemon(slot);
+        p.level = Math.max(1, p.level + cleanInt(amount, 1));
+        setHp(p, true);
+        return { name: p.name, level: p.level };
+      });
     },
-
-    forceShiny(slot = 1, value = true) {
-      const p = member(slot);
-      makeShiny(p, value);
-
-      if (value) markCaught(p);
-      touch();
-
-      return {
-        slot: Number(slot),
-        pokemon: p.nickname || p.name,
-        shiny: !!value
-      };
-    },
-
     shiny(slot = 1) {
-      return this.forceShiny(slot, true);
+      return mutate(() => { const p = slotPokemon(slot); setShinyFlag(p, true); return { pokemon: p.name, shiny: true }; });
     },
-
     unshiny(slot = 1) {
-      return this.forceShiny(slot, false);
+      return mutate(() => { const p = slotPokemon(slot); setShinyFlag(p, false); return { pokemon: p.name, shiny: false }; });
     },
-
     shinyTeam(value = true) {
-      const arr = teamArray();
-
-      arr.forEach(p => {
-        makeShiny(p, value);
-        if (value) markCaught(p);
-      });
-
-      touch();
-
-      return {
-        message: value
-          ? '✅ Time inteiro ficou shiny.'
-          : '✅ Time inteiro deixou de ser shiny.',
-        team: this.team()
-      };
+      return mutate(() => { for (const p of game().team) setShinyFlag(p, !!value); return this.team(); });
     },
-
-    forceTeamShiny() {
-      return this.shinyTeam(true);
-    },
-
+    forceTeamShiny() { return this.shinyTeam(true); },
+    forceShiny(slot = 1, value = true) { return value ? this.shiny(slot) : this.unshiny(slot); },
     heal(slot = 'all') {
-      if (slot === 'all') {
-        teamArray().forEach(setHpFull);
-        touch();
-        return '✅ Time inteiro curado.';
-      }
-
-      const p = member(slot);
-      setHpFull(p);
-      touch();
-
-      return {
-        pokemon: p.nickname || p.name,
-        hp: `${p.currentHp}/${p.maxHp}`
-      };
+      return mutate(() => {
+        const arr = slot === 'all' ? game().team : [slotPokemon(slot)];
+        for (const p of arr) setHp(p, true);
+        return { healed: arr.map(p => p.name) };
+      });
     },
-
+    reviveAndHealTeam() { return this.heal(); },
     faint(slot = 1) {
-      const p = member(slot);
-      p.currentHp = 0;
-      p.hp = 0;
-      touch();
-
-      return {
-        pokemon: p.nickname || p.name,
-        hp: 0
-      };
+      return mutate(() => { const p = slotPokemon(slot); p.currentHp = 0; return { pokemon: p.name, hp: 0 }; });
     },
-
     moveTier(slot = 1, tier = 2) {
-      const p = member(slot);
-      setMoveTier(p, tier);
-      touch();
-
-      return {
-        pokemon: p.nickname || p.name,
-        moveTier: p.moveTier
-      };
+      return mutate(() => { const p = slotPokemon(slot); p.moveTier = Math.max(0, Math.min(2, cleanInt(tier, 2))); return { pokemon: p.name, moveTier: p.moveTier }; });
     },
-
-    moveType(slot = 1, type = 'Normal') {
-      const p = member(slot);
-      setMoveType(p, type);
-      touch();
-
-      return {
-        pokemon: p.nickname || p.name,
-        moveType: p.moveType
-      };
+    moveType() {
+      throw new Error('moveType nao foi atualizado: a versao 3.7.1 define o tipo do golpe dinamicamente; mudar p.moveType nao altera o combate.');
     },
-
-    equip(slot = 1, itemId = null) {
-      const p = member(slot);
-      setItem(p, itemId);
-      touch();
-
-      return {
-        pokemon: p.nickname || p.name,
-        item: itemId
-      };
+    equip(slot = 1, id = 'leftovers') {
+      return mutate(() => {
+        const p = slotPokemon(slot);
+        const item = itemDefinition(id);
+        if (!item) throw new Error('Item desconhecido: ' + id + '. Veja itemsDisponiveis().');
+        p.heldItem = copy(item);
+        if (typeof syncMegaForm === 'function') { try { syncMegaForm(p); } catch {} }
+        return { pokemon: p.name, item: item.id };
+      });
     },
-
-    battlePoints(amount = 9999) {
-      const meta = metaStore();
-      meta.battlePoints = Number(amount) || 0;
-      try { meta.$patch({}); } catch {}
-
-      return {
-        battlePoints: meta.battlePoints
-      };
-    },
-
-    addBattlePoints(amount = 100) {
-      const meta = metaStore();
-
-      if (typeof meta.awardRunBattlePoints === 'function') {
-        const gained = meta.awardRunBattlePoints(Number(amount) || 0);
-
-        return {
-          gained,
-          battlePoints: meta.battlePoints
-        };
-      }
-
-      meta.battlePoints = Number(meta.battlePoints || 0) + (Number(amount) || 0);
-
-      return {
-        battlePoints: meta.battlePoints
-      };
-    },
-
     buff(slot = 1, stat = 'atk', amount = 1) {
-      const p = member(slot);
-      const meta = metaStore();
-      const rootId = rootIdOf(p);
-      const statKey = normalizeStat(stat);
-      const qty = Math.max(1, Number(amount) || 1);
-      const gen = activeRun().gen ?? activeRun().state?.gen ?? 0;
-
-      if (typeof meta.applyTeamStatBuff !== 'function') {
-        console.log('metaProgression:', meta);
-        throw new Error('applyTeamStatBuff não encontrado no metaProgression.');
-      }
-
-      for (let i = 0; i < qty; i++) {
-        meta.applyTeamStatBuff(rootId, statKey, 999999, gen);
-      }
-
-      setHpFull(p);
-      touch();
-
-      return {
-        pokemon: p.nickname || p.name,
-        rootId,
-        stat: statKey,
-        buffs: typeof meta.statBuffsForRoot === 'function'
-          ? meta.statBuffsForRoot(rootId)
-          : meta.statBuffs
-      };
+      return mutate(() => {
+        const p = slotPokemon(slot);
+        return { pokemon: p.name, ...applyBuffDirect(p, stat, amount) };
+      });
     },
-
     maxBuffs(slot = 1) {
-      const p = member(slot);
-      applyBuffsToMember(p, 10);
-      setHpFull(p);
-      touch();
-
-      return this.showBuffs(slot);
+      return mutate(() => {
+        const p = slotPokemon(slot);
+        return { pokemon: p.name, buffs: allBuffsDirect(p) };
+      });
     },
-
     showBuffs(slot = 1) {
-      const p = member(slot);
-      const meta = metaStore();
-      const rootId = rootIdOf(p);
-
-      return {
-        pokemon: p.nickname || p.name,
-        rootId,
-        buffs: typeof meta.statBuffsForRoot === 'function'
-          ? meta.statBuffsForRoot(rootId)
-          : meta.statBuffs
-      };
+      const p = slotPokemon(slot);
+      return { pokemon: p.name, buffs: p.statBuffs || {}, persistidos: readBuffs()[root(p)] || {} };
     },
-
-    addItem(itemId, amount = 1) {
-      return addLooseItemDirect(itemId, amount);
-    },
-
-    addLooseItem(itemId, amount = 1) {
-      return addLooseItemDirect(itemId, amount);
-    },
-
-    maxRevive(amount = 10) {
-      return this.addItem('max_revive', amount);
-    },
-
-    fullRestore(amount = 10) {
-      return this.addItem('full_restore', amount);
-    },
-
-    maxHealingItems(amount = 10) {
-      return {
-        maxRevive: this.addItem('max_revive', amount),
-        fullRestore: this.addItem('full_restore', amount)
-      };
-    },
-
-    reviveAndHealTeam() {
-      const arr = teamArray();
-
-      for (const p of arr) {
-        setHpFull(p);
-      }
-
-      touch();
-
-      return '✅ Time revivido e curado sem gastar item.';
-    },
-
-    async pokemon(search = '') {
-      const list = await loadDex();
-      const q = String(search).toLowerCase();
-
-      return list
-        .filter(p =>
-          !q ||
-          String(p.id).includes(q) ||
-          String(p.speciesId).includes(q) ||
-          String(p.pokemonId).includes(q) ||
-          String(p.dexId).includes(q) ||
-          String(p.name || '').toLowerCase().includes(q)
-        )
-        .map(p => ({
-          id: p.id ?? p.speciesId ?? p.pokemonId ?? p.dexId,
-          name: p.name,
-          types: Array.isArray(p.types) ? p.types.join('/') : p.types,
-          gen: p.gen ?? p.generation
-        }));
-    },
-
-
-    unlockAchievements() {
-      const ids = collectAchievementIds();
-
-      if (ids.length === 0) {
-        throw new Error('Não achei a lista de conquistas. Abra a tela de conquistas no jogo e tente novamente.');
-      }
-
-      const current = currentAchievementSet();
-      let added = 0;
-
-      for (const id of ids) {
-        if (!current.has(id)) {
-          current.add(id);
-          added++;
-        }
-
-        unlockAchievementInStore(id);
-      }
-
-      const unlocked = [...current];
-      writeJson('poke_achievements', unlocked);
-      writeJson('achievements', unlocked);
-      writeJson('unlockedAchievements', unlocked);
-      syncProgression();
-
-      return {
-        message: '✅ Todas as conquistas encontradas foram liberadas.',
-        added,
-        total: unlocked.length,
-        ids: unlocked
-      };
-    },
-
-    unlockDexGen(gen, options = {}) {
-      const [min, max] = getRangeByGen(gen);
-
-      return {
-        message: `✅ Pokédex da geração ${Number(gen)} liberada.`,
-        gen: Number(gen),
-        ...unlockDexRange(min, max, options)
-      };
-    },
-
-    unlockShinyDexGen(gen) {
-      return this.unlockDexGen(gen, {
-        normal: true,
-        shiny: true
+    apelaPrimeiro() {
+      return mutate(() => {
+        const p = slotPokemon(1);
+        p.level = 100; p.moveTier = 2;
+        setShinyFlag(p, true); allBuffsDirect(p);
+        if (!p.heldItem) p.heldItem = copy(itemDefinition('leftovers') || { id: 'leftovers', name: 'Leftovers', icon: '🍃' });
+        return { pokemon: p.name, level: p.level, shiny: true, buffs: p.statBuffs };
       });
     },
-
-    unlockDexAll(options = {}) {
-      const results = {};
-
-      for (const gen of Object.keys(GEN_RANGES)) {
-        const [min, max] = GEN_RANGES[gen];
-        results[`gen${gen}`] = unlockDexRange(min, max, options);
-      }
-
-      return {
-        message: '✅ Pokédex de todas as gerações liberada.',
-        results
-      };
-    },
-
-    unlockShinyDexAll() {
-      return this.unlockDexAll({
-        normal: true,
-        shiny: true
+    apelaTime() {
+      return mutate(() => {
+        const db = readBuffs();
+        const fallback = ['leftovers','life_orb','choice_specs','choice_band','assault_vest','focus_sash'];
+        game().team.forEach((p, i) => {
+          p.level = 100; p.moveTier = 2;
+          setShinyFlag(p, true); allBuffsDirect(p, db);
+          if (!p.heldItem) {
+            const item = itemDefinition(fallback[i % fallback.length]);
+            if (item) p.heldItem = copy(item);
+          }
+        });
+        writeBuffs(db);
+        return this.team();
       });
     },
-
-    dexStatus() {
-      const dex = readJson('poke_dex', {});
-      const shinyDex = readJson('poke_shiny_dex', {});
-      const achievements = currentAchievementSet();
-      const gens = {};
-
-      for (const [gen, [min, max]] of Object.entries(GEN_RANGES)) {
-        let caught = 0;
-        let shiny = 0;
-
-        for (let id = min; id <= max; id++) {
-          if (dex[id] === 1) caught++;
-          if (shinyDex[id] === 1) shiny++;
-        }
-
-        gens[`gen${gen}`] = {
-          caught,
-          shiny,
-          total: max - min + 1
-        };
-      }
-
-      return {
-        achievements: achievements.size,
-        pokedexCaught: Object.values(dex).filter(v => v === 1).length,
-        shinyCaught: Object.values(shinyDex).filter(v => v === 1).length,
-        gens
-      };
+    bp(value = null) { return value == null ? { pokedollars: readMoney() } : this.setBP(value); },
+    setBP(value = 999999) { return writeMoney(value); },
+    addBP(value = 1000) { return writeMoney(readMoney() + cleanInt(value, 1000)); },
+    maxBP(value = 999999) { return this.setBP(value); },
+    spendBP(value = 0) { return writeMoney(readMoney() - Math.max(0, cleanInt(value))); },
+    battlePoints(value = 9999) { return this.setBP(value); },
+    addBattlePoints(value = 100) { return this.addBP(value); },
+    itemsDisponiveis() {
+      const pools = [
+        ...((typeof ITEM_POOL !== 'undefined' && Array.isArray(ITEM_POOL) ? ITEM_POOL : []).map(x => ({ ...x, categoria: 'equipavel' }))),
+        ...((typeof USABLE_ITEM_POOL !== 'undefined' && Array.isArray(USABLE_ITEM_POOL) ? USABLE_ITEM_POOL : []).map(x => ({ ...x, categoria: 'consumivel' }))),
+        ...((typeof PASSIVE_ITEM_POOL !== 'undefined' && Array.isArray(PASSIVE_ITEM_POOL) ? PASSIVE_ITEM_POOL : []).map(x => ({ ...x, categoria: 'passiva' })))
+      ];
+      return [...new Map(pools.map(x => [x.categoria + ':' + x.id, {
+        id: x.id, name: x.name, categoria: x.categoria, desc: x.desc
+      }])).values()];
     },
-
-    async allPokemon() {
-      return await this.pokemon('');
+    addPassive(id) {
+      return mutate(() => {
+        const pool = typeof PASSIVE_ITEM_POOL !== 'undefined' ? PASSIVE_ITEM_POOL : [];
+        const passive = pool.find(x => x?.id === String(id).trim().toLowerCase());
+        if (!passive) throw new Error('Passiva desconhecida: ' + id + '. Veja itemsDisponiveis().');
+        if (passive.oneShot) throw new Error('Esta passiva e de uso imediato; nao e seguro inseri-la diretamente.');
+        const s = game();
+        s.passives ||= [];
+        if (s.passives.some(x => x.id === passive.id)) return { item:passive.id, status:'ja possui' };
+        s.passives.push({ ...copy(passive), enabled:true });
+        if (typeof sortPassivesCharmsFirst === 'function') sortPassivesCharmsFirst(s.passives);
+        return { item:passive.id, status:'adicionada como passiva', total:s.passives.length };
+      });
     },
-
+    addItem(id, amount = 1) {
+      return mutate(() => {
+        const item = itemDefinition(id);
+        const special = String(id).toLowerCase() === 'rare_candy';
+        if (!item && !special) throw new Error('Item nao existe nesta versao: ' + id + '. Use itemsDisponiveis().');
+        const s = game();
+        s.items ||= [];
+        const qty = Math.min(10, Math.max(0, cleanInt(amount, 1)));
+        const free = Math.max(0, 10 - s.items.length);
+        const added = Math.min(qty, free);
+        const def = item || { id:'rare_candy', name:'Rare Candy', desc:'Use on a Pokémon to raise it +3 levels', icon:'🍬', usable:true, oneTime:true };
+        for (let i = 0; i < added; i++) s.items.push(copy(def));
+        return { item: def.id, added, bagCount: s.items.length, maxBag: 10,
+          warning: qty > added ? 'Mochila limitada a 10 itens na versao atual.' : null };
+      });
+    },
+    addLooseItem(id, amount = 1) { return this.addItem(id, amount); },
+    maxRevive() { return { message: 'Max Revive nao existe como item nesta versao.', alternative: 'PokeLiteCheats.reviveAndHealTeam()' }; },
+    fullRestore() { return { message: 'Full Restore nao existe como item nesta versao.', alternative: 'PokeLiteCheats.heal()' }; },
+    maxHealingItems() { return { message: 'A mochila nova nao utiliza max_revive/full_restore. Use reviveAndHealTeam().' }; },
+    async pokemon(query = '') {
+      const dex = await loadStaticPokedex();
+      const q = String(query).toLowerCase();
+      return Object.entries(dex || {}).filter(([id,p]) => id.includes(q) || String(p?.name || '').toLowerCase().includes(q))
+        .map(([id,p]) => ({ id: Number(id), name: p.name, types: p.types, baseStats: p.baseStats }));
+    },
+    async allPokemon() { return this.pokemon(''); },
     async setPokemon(slot = 1, idOrName = 25, options = {}) {
-      const index = Number(slot) - 1;
-      const arr = teamArray();
-
-      if (index < 0) throw new Error('Slot inválido.');
-
-      const p = await makeMemberFromDex(idOrName, {
-        level: 100,
-        shiny: true,
-        moveTier: 2,
-        ...options
-      });
-
-      arr[index] = p;
-      markCaught(p);
-      applyBuffsToMember(p, 10);
-      setTeamArray(arr);
-
-      return {
-        slot,
-        pokemon: p.name,
-        id: speciesIdOf(p),
-        level: p.level,
-        shiny: p.isShiny ?? p.shiny,
-        item: p.heldItemId ?? p.itemId,
-        moveType: p.moveType
-      };
+      inRun();
+      const index = cleanInt(slot) - 1;
+      if (index < 0 || index > 5) throw new Error('Slot deve estar entre 1 e 6.');
+      const db = readBuffs();
+      const p = await buildPokemon(idOrName, options, db);
+      if (typeof runWritesAllowed === 'function' && !runWritesAllowed()) throw new Error('Salvamento bloqueado nesta aba.');
+      const s = game();
+      s.team[index] = p;
+      s.maxTeamSize = Math.max(s.maxTeamSize || 1, s.team.length);
+      writeBuffs(db); registerCaught(p); persist();
+      return { slot: index + 1, name: p.name, level: p.level, shiny: p.isShiny, item: p.heldItem?.id || null };
     },
-
     async setTeamManual(configs = []) {
-      if (!Array.isArray(configs) || configs.length === 0) {
-        throw new Error('Passe uma lista de Pokémon. Ex: PokeLiteCheats.setTeamManual([{ id: 25 }])');
-      }
-
+      inRun();
+      if (!Array.isArray(configs) || configs.length === 0 || configs.length > 6) throw new Error('Informe de 1 a 6 Pokemon no array.');
+      const db = readBuffs();
       const newTeam = [];
-
-      for (const cfg of configs.slice(0, 6)) {
-        const p = await makeMemberFromDex(cfg.id ?? cfg.name, {
-          level: cfg.level ?? 100,
-          shiny: cfg.shiny ?? true,
-          item: cfg.item ?? null,
-          moveType: cfg.moveType ?? null,
-          moveTier: cfg.moveTier ?? 2
-        });
-
-        applyBuffsToMember(p, cfg.buffs ?? 10);
-        markCaught(p);
-        newTeam.push(p);
+      for (const cfg of configs) newTeam.push(await buildPokemon(cfg.id ?? cfg.name, cfg, db));
+      if (typeof runWritesAllowed === 'function' && !runWritesAllowed()) throw new Error('Salvamento bloqueado nesta aba.');
+      const s = game();
+      s.team = newTeam;
+      s.maxTeamSize = Math.max(s.maxTeamSize || 1, newTeam.length);
+      writeBuffs(db);
+      for (const p of newTeam) registerCaught(p);
+      persist();
+      return { message: 'Time criado com dados da versao 3.7.1.', team: this.team() };
+    },
+    unlockAchievements() {
+      if (typeof ACHIEVEMENTS === 'undefined' || !Array.isArray(ACHIEVEMENTS)) {
+        throw new Error('Lista de conquistas nao encontrada.');
       }
-
-      setTeamArray(newTeam);
-
-      return {
-        message: '✅ Time manual criado.',
-        team: this.team()
-      };
+      const before = typeof getUnlockedAchievements === 'function'
+        ? getUnlockedAchievements() : new Set(JSON.parse(localStorage.getItem('poke_achievements') || '[]'));
+      const ids = ACHIEVEMENTS.map(x => x?.id).filter(Boolean);
+      const updated = new Set([...before, ...ids]);
+      localStorage.setItem('poke_achievements', JSON.stringify([...updated]));
+      return { added: updated.size - before.size, total: updated.size };
     },
-
-    async apelaPrimeiro() {
-      const p = member(1);
-
-      applyBasicMax(p, {
-        level: 100,
-        shiny: true,
-        item: p.heldItemId ?? p.itemId ?? 'leftovers',
-        moveType: p.moveType ?? (Array.isArray(p.types) ? p.types[0] : 'Normal'),
-        moveTier: 2
-      });
-
-      applyBuffsToMember(p, 10);
-      markCaught(p);
-      touch();
-
-      return {
-        message: '✅ Primeiro Pokémon ficou apelão.',
-        pokemon: p.nickname || p.name,
-        level: p.level,
-        shiny: p.isShiny ?? p.shiny,
-        item: p.heldItemId ?? p.itemId,
-        hp: `${p.currentHp}/${p.maxHp}`,
-        buffs: this.showBuffs(1)
-      };
+    unlockDexGen(gen, options = {}) {
+      const range = GEN_RANGES[Number(gen)];
+      if (!range) throw new Error('Geracao disponivel no Pokelike 3.7.1: 1 a 6.');
+      const norm = options.normal !== false;
+      const shiny = !!options.shiny;
+      const dex = JSON.parse(localStorage.getItem('poke_dex') || '{}');
+      const sh = JSON.parse(localStorage.getItem('poke_shiny_dex') || '{}');
+      let addedNormal = 0, addedShiny = 0;
+      for (let id = range[0]; id <= range[1]; id++) {
+        if (norm && dex[id] !== 1) { dex[id] = 1; addedNormal++; }
+        if (shiny && sh[id] !== 1) { sh[id] = 1; addedShiny++; }
+      }
+      if (norm) localStorage.setItem('poke_dex', JSON.stringify(dex));
+      if (shiny) localStorage.setItem('poke_shiny_dex', JSON.stringify(sh));
+      if (typeof checkDexAchievements === 'function') { try { checkDexAchievements(); } catch (e) { console.warn(e); } }
+      return { gen:Number(gen), range, addedNormal, addedShiny };
     },
-
-    async apelaTime() {
-      const arr = teamArray();
-      const fallbackItems = ['leftovers', 'life_orb', 'choice_specs', 'choice_band', 'assault_vest', 'focus_sash'];
-
-      arr.forEach((p, i) => {
-        applyBasicMax(p, {
-          level: 100,
-          shiny: true,
-          item: p.heldItemId ?? p.itemId ?? fallbackItems[i % fallbackItems.length],
-          moveType: p.moveType ?? (Array.isArray(p.types) ? p.types[0] : 'Normal'),
-          moveTier: 2
-        });
-
-        applyBuffsToMember(p, 10);
-        markCaught(p);
-      });
-
-      setTeamArray(arr);
-
-      return {
-        message: '✅ Time inteiro ficou apelão.',
-        team: this.team()
-      };
+    unlockShinyDexGen(gen) { return this.unlockDexGen(gen, { normal:true, shiny:true }); },
+    unlockDexAll(options = {}) {
+      const result = [];
+      for (const g of Object.keys(GEN_RANGES)) result.push(this.unlockDexGen(g, options));
+      return result;
+    },
+    unlockShinyDexAll() { return this.unlockDexAll({ normal:true, shiny:true }); },
+    dexStatus() {
+      const dex = JSON.parse(localStorage.getItem('poke_dex') || '{}');
+      const sh = JSON.parse(localStorage.getItem('poke_shiny_dex') || '{}');
+      const achievements = JSON.parse(localStorage.getItem('poke_achievements') || '[]');
+      const gens = {};
+      for (const [g, [start, end]] of Object.entries(GEN_RANGES)) {
+        let caught = 0, shiny = 0;
+        for (let n = start; n <= end; n++) { if (dex[n] === 1) caught++; if (sh[n] === 1) shiny++; }
+        gens[g] = { caught, shiny, total: end - start + 1 };
+      }
+      return { gens, totalNormal: Object.values(gens).reduce((a,x) => a+x.caught,0),
+        totalShiny: Object.values(gens).reduce((a,x) => a+x.shiny,0), achievements: achievements.length };
     }
   };
 
-  console.log('✅ PokeLiteCheats carregado.');
-  console.log('Use PokeLiteCheats.help() para ver os comandos.');
-  console.log('Inclui shiny corrigido, Pokédex por geração e conquistas.');
+  console.log('✅ PokeLiteCheats v' + VERSION + ' carregado para o Pokelike sem Vue.');
+  if (!isGamePresent()) console.warn('⚠️ O motor atual do jogo nao esta acessivel neste console. Use PokeLiteCheats.status() para diagnosticar.');
+  console.log('Comandos: PokeLiteCheats.help() | Diagnostico: PokeLiteCheats.status() | Backup: PokeLiteCheats.backup()');
   return api;
-})();
-
-(() => {
-  const C = window.PokeLiteCheats;
-
-  if (!C) {
-    throw new Error("PokeLiteCheats não encontrado. Rode o script principal primeiro.");
-  }
-
-  function getMeta() {
-    if (typeof C.rawMeta === "function") {
-      return C.rawMeta();
-    }
-
-    throw new Error("rawMeta() não encontrado no PokeLiteCheats.");
-  }
-
-  function patchMeta(meta) {
-    try {
-      meta.$patch?.({
-        battlePoints: meta.battlePoints
-      });
-    } catch {}
-
-    try {
-      meta.updatedAt = Date.now();
-      meta.lastUpdated = Date.now();
-    } catch {}
-
-    try {
-      if (typeof window.syncToCloud === "function") {
-        window.syncToCloud();
-      }
-    } catch {}
-
-    return true;
-  }
-
-  C.bp = function(amount = null) {
-    const meta = getMeta();
-
-    if (amount === null || amount === undefined) {
-      return {
-        battlePoints: Number(meta.battlePoints || 0)
-      };
-    }
-
-    return C.setBP(amount);
-  };
-
-  C.setBP = function(amount = 999999) {
-    const meta = getMeta();
-    const value = Math.max(0, Number(amount) || 0);
-
-    meta.battlePoints = value;
-    patchMeta(meta);
-
-    return {
-      message: "✅ BP definido.",
-      battlePoints: meta.battlePoints
-    };
-  };
-
-  C.addBP = function(amount = 1000) {
-    const meta = getMeta();
-    const value = Number(amount) || 0;
-
-    meta.battlePoints = Math.max(0, Number(meta.battlePoints || 0) + value);
-    patchMeta(meta);
-
-    return {
-      message: "✅ BP adicionado.",
-      added: value,
-      battlePoints: meta.battlePoints
-    };
-  };
-
-  C.maxBP = function(amount = 999999) {
-    return C.setBP(amount);
-  };
-
-  C.spendBP = function(amount = 0) {
-    const meta = getMeta();
-    const value = Math.max(0, Number(amount) || 0);
-
-    meta.battlePoints = Math.max(0, Number(meta.battlePoints || 0) - value);
-    patchMeta(meta);
-
-    return {
-      message: "✅ BP removido.",
-      removed: value,
-      battlePoints: meta.battlePoints
-    };
-  };
-
-  console.log("✅ Patch de BP aplicado.");
-  console.log("Comandos novos:");
-  console.log("PokeLiteCheats.bp()");
-  console.log("PokeLiteCheats.setBP(999999)");
-  console.log("PokeLiteCheats.addBP(1000)");
-  console.log("PokeLiteCheats.maxBP()");
-  console.log("PokeLiteCheats.spendBP(100)");
 })();
